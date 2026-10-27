@@ -1,0 +1,81 @@
+name: ci
+
+"on":
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Every OS: the GUI is cgo (Fyne -> GLFW/OpenGL) on all three platforms, so
+    # a build that is green on one says little about the others.
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Git Bash on Windows, so the steps below are written once.
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+        with:
+          # go + golangci-lint is the whole toolchain: the tests cover the sync
+          # core offline (archive layout, quoting); the live ssh tests skip
+          # without MOD_PUSHER_HOST. goreleaser stays out — nothing here releases.
+          install_args: go golangci-lint
+      - name: Install GUI build dependencies
+        # Linux only: macOS ships the frameworks, and the Windows runner already
+        # has mingw-w64 gcc on PATH for cgo.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev wayland-protocols
+      - name: Resolve Go cache paths
+        # Computed rather than hardcoded to ~/go/pkg/mod: mise controls the Go
+        # install, and a path that does not exist caches NOTHING while still
+        # reporting success — a silent no-op is the failure mode to avoid here.
+        run: |
+          echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+          echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+      - name: Cache Go modules and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GOMODCACHE }}
+            ${{ env.GOCACHE }}
+          # .mise.toml is in the key because the build cache is TOOLCHAIN-specific:
+          # a Go bump must start a fresh lineage rather than restore entries the
+          # new compiler cannot reuse. go.sum keys the module half; restore-keys
+          # lets a dependency change still reuse the previous run's downloads.
+          key: ${{ runner.os }}-go-${{ hashFiles('.mise.toml') }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('.mise.toml') }}-
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+      - name: Test
+        # -race stays in the single test run: this suite is small enough that the
+        # detector costs seconds, so there is nothing to gain from splitting it
+        # out the way a slow suite would.
+        run: go test -race -v ./...
+      - name: Lint
+        # Runs even when the steps above failed: a red test must not hide lint
+        # findings. `!cancelled()` rather than `always()`, so cancelling a run
+        # actually stops it. Linux only: the code has no per-OS logic worth
+        # linting three times (exec_windows.go is two lines).
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: golangci-lint run ./...

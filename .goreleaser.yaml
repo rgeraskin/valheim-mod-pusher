@@ -1,0 +1,115 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    # Windows icon + manifest as rsrc_windows_amd64.syso: go build links it into
+    # windows builds only (the filename suffix is a build constraint).
+    - go run github.com/tc-hib/go-winres@v0.3.3 simply --icon Icon.png --manifest gui --arch amd64
+
+builds:
+  - main: .
+    binary: valheim-mod-pusher
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    # cgo everywhere: Fyne renders through OpenGL/GLFW. This job runs on a macOS
+    # runner (see release.yml), which builds both darwin arches natively and
+    # windows through mingw-w64. Linux GUI builds need the X11/Wayland/GL
+    # headers and libs of the target, so they are built on Linux runners and
+    # attached below via extra_files instead.
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+      - windows
+    goarch:
+      - arm64
+      - amd64
+    ignore:
+      # mingw-w64 from Homebrew has no arm64 target; Windows on ARM runs the
+      # amd64 build under emulation.
+      - goos: windows
+        goarch: arm64
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CGO_CFLAGS=-target x86_64-apple-macos12
+          - CGO_LDFLAGS=-target x86_64-apple-macos12
+      - goos: windows
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=x86_64-w64-mingw32-gcc
+          - CXX=x86_64-w64-mingw32-g++
+        ldflags:
+          - -s -w
+          - -X main.version={{ .Version }}
+          - -X main.commit={{ .Commit }}
+          - -X main.date={{ .Date }}
+          # GUI subsystem: no console window behind the app
+          - -H=windowsgui
+
+archives:
+  - formats:
+      - tar.gz
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    # release.yml's linux job names its archives with the same scheme.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "checksums.txt"
+  extra_files:
+    - glob: ./linux/*.tar.gz
+
+release:
+  extra_files:
+    - glob: ./linux/*.tar.gz
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+# NOTE: `brews` is deprecated in favor of `homebrew_casks` but still fully
+# functional in the pinned GoReleaser version (it emits a warning, then writes a
+# real Formula). A Formula is the right abstraction here as well: it installs a
+# single binary that opens the app window, and unlike a Cask its binary is not
+# Gatekeeper-quarantined, so no xattr dequarantine hack is needed. The
+# GoReleaser version is pinned in .mise.toml (used by both the release workflow
+# and local snapshots) so a future release that actually removes `brews` cannot
+# break us unexpectedly.
+brews:
+  - name: valheim-mod-pusher
+    homepage: https://github.com/rgeraskin/valheim-mod-pusher
+    description: Desktop app that pushes a local mods folder to a Valheim server over ssh and runs a follow-up command
+    license: MIT
+
+    directory: Formula
+    repository:
+      owner: rgeraskin
+      name: homebrew-homebrew

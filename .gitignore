@@ -1,0 +1,6 @@
+/dist
+/linux
+/valheim-mod-pusher
+/coverage.out
+/coverage.html
+rsrc_windows_*.syso

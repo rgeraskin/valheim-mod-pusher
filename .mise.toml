@@ -1,0 +1,102 @@
+[tools]
+go = "1.27.0"
+golangci-lint = "2.13.1"
+# Release tooling. DO NOT bump blindly in a "update all tools" sweep:
+# .goreleaser.yaml still uses the deprecated-but-functional `brews` (Formula)
+# generator, so a GoReleaser release that finally REMOVES it would break
+# Homebrew publishing. After a bump run `goreleaser release --snapshot --clean
+# --skip=publish` (mise run release-check) and confirm
+# dist/homebrew/Formula/valheim-mod-pusher.rb is still written.
+#
+# 2.17.1 matches the version argocdf and kctouch pin. GoReleaser runs on macOS
+# here (like kctouch), so argocdf's linux-x64 aqua-attestation issue with
+# 2.18.0 cannot bite, but there is no reason to run ahead of the reference.
+# Verified working on darwin-arm64 as of 2.17.1.
+goreleaser = "2.17.1"
+
+[env]
+BINARY_NAME = "valheim-mod-pusher"
+
+[tasks.build]
+description = "Build the binary"
+run = """
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+go build -ldflags "-X main.version=$VERSION" -o $BINARY_NAME .
+"""
+
+[tasks.install]
+description = "Install to GOPATH/bin"
+run = """
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+go install -ldflags "-X main.version=$VERSION" .
+"""
+
+[tasks.run]
+description = "Build and launch the app"
+depends = ["build"]
+run = "./$BINARY_NAME"
+
+[tasks.test]
+description = "Run tests"
+run = "go test -v ./..."
+
+[tasks.test-race]
+description = "Run tests under the race detector. Separate from `test` because it is slower; `check` runs it, so CI does."
+run = "go test -race ./..."
+
+[tasks.test-live]
+# Talks to a real server: uploads to /tmp/valheim-mod-pusher-it there and
+# removes it afterwards; the follow-up command only echoes. Not part of `check`.
+description = "Run the live ssh tests (needs MOD_PUSHER_HOST, optionally MOD_PUSHER_PORT)"
+run = "go test -v -count=1 -run Live ./internal/syncer"
+
+[tasks.test-coverage]
+alias = "coverage"
+description = "Run tests with coverage"
+run = """
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+"""
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.fmt]
+alias = "format"
+description = "Format code"
+run = "go fmt ./..."
+
+[tasks.tidy]
+description = "Tidy dependencies"
+run = "go mod tidy"
+
+[tasks.release-check]
+# Reproduces .github/workflows/release.yml locally, minus publishing and minus
+# the Linux archives (built on Linux runners in CI). The windows build needs
+# mingw-w64 (`brew install mingw-w64`). After a GoReleaser bump, confirm
+# dist/homebrew/Formula/valheim-mod-pusher.rb is still written.
+#
+# `goreleaser check` is intentionally not part of this: it exits non-zero on the
+# known `brews` deprecation (see the note in .goreleaser.yaml) even though the
+# config is valid and releases fine.
+description = "Build a local release snapshot without publishing"
+run = "goreleaser release --snapshot --clean --skip=publish"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = """
+rm -f $BINARY_NAME
+rm -f coverage.out coverage.html
+rm -f rsrc_windows_*.syso
+rm -rf dist
+"""
+
+[tasks.check]
+alias = "ci"
+description = "Run all checks (vet, lint, test, test-race)"
+depends = ["vet", "lint", "test", "test-race"]

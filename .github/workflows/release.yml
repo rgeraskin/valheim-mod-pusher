@@ -1,0 +1,139 @@
+name: release
+
+"on":
+  push:
+    # run only against version tags
+    tags:
+      - "v*"
+  # Manual run = dry run: same builds, `goreleaser --snapshot`, nothing
+  # published; the would-be release is uploaded as a workflow artifact.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # Fyne on Linux links against the target's X11/Wayland/GL libraries, so these
+    # builds cannot come from the macOS GoReleaser job. Each arch builds natively
+    # on its own runner; the archives use GoReleaser's naming scheme and are
+    # attached to the release via `extra_files` in .goreleaser.yaml.
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+        with:
+          install_args: go
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev wayland-protocols
+      - name: Resolve Go module cache path
+        run: echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          # Modules only, own key namespace: see the goreleaser job below.
+          path: ${{ env.GOMODCACHE }}
+          key: ${{ runner.os }}-${{ runner.arch }}-gomod-release-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-gomod-release-
+      - name: Build and archive
+        # Same ldflags and archive layout as the GoReleaser builds.
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(git describe --tags --always)-SNAPSHOT"
+          fi
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=$VERSION -X main.commit=$GITHUB_SHA -X main.date=$DATE" \
+            -o valheim-mod-pusher .
+          mkdir -p linux
+          tar -czf "linux/valheim-mod-pusher_Linux_${{ matrix.arch }}.tar.gz" \
+            valheim-mod-pusher README.md LICENSE
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: linux/*.tar.gz
+          if-no-files-found: error
+
+  goreleaser:
+    needs: linux
+    # macOS: cgo builds for both darwin arches need the macOS SDK, and mingw-w64
+    # from Homebrew covers windows. Linux comes from the job above.
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+        with:
+          # go compiles, goreleaser orchestrates — BOTH pinned in .mise.toml, so
+          # `mise exec -- goreleaser release --clean` reproduces this job on a
+          # laptop (plus `brew install mingw-w64`, minus the Linux archives).
+          install_args: go goreleaser
+      - name: Install mingw-w64
+        # cgo cross compiler for the windows build
+        run: brew install mingw-w64
+      - name: Resolve Go module cache path
+        # Computed, not hardcoded to ~/go/pkg/mod: mise owns the Go install, and
+        # a cache path that does not exist stores NOTHING while still reporting
+        # success — a silent no-op is the failure mode worth spending 2 lines on.
+        run: echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          # Modules ONLY, deliberately not GOCACHE: a multi-target cgo build cache
+          # is large and near-worthless across releases (every tag is a different
+          # commit), so caching it would burn the repo's shared 10GB budget and
+          # evict ci.yml's entries in exchange for nothing. Its own key namespace
+          # for the same reason — release must not overwrite the entry CI depends
+          # on.
+          path: ${{ env.GOMODCACHE }}
+          key: ${{ runner.os }}-gomod-release-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-gomod-release-
+      - name: Download Linux archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: linux
+      - name: Run GoReleaser
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: goreleaser release --clean
+        env:
+          # GH_PAT needs `contents: write` on this repo and the homebrew tap
+          # repo so GoReleaser can push the generated Formula.
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      - name: Run GoReleaser (snapshot)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: goreleaser release --snapshot --clean --skip=publish
+      - name: Upload snapshot
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/homebrew/Formula/*.rb
+            linux/*.tar.gz
