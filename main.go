@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +26,27 @@ import (
 //go:embed Icon.png
 var iconPNG []byte
 
-const defaultFollowUp = `if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`
+// Defaults match valheim-server-docker
+// (https://github.com/community-valheim-tools/valheim-server-docker) with the
+// volumes from its README: $HOME/valheim-server/{config,data}.
+const (
+	defaultPluginsDir = "~/valheim-server/data/bepinex/BepInEx/plugins"
+	defaultFollowUp   = `# valheim-server-docker: restart the container only if no players are online
+if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`
+)
+
+// localDirExample is the placeholder for the local plugins dir: Gale's default
+// profile location where Gale exists (Windows, Linux), a generic path elsewhere.
+func localDirExample() string {
+	switch runtime.GOOS {
+	case "windows":
+		return `e.g. %APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins`
+	case "linux":
+		return "e.g. ~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins"
+	default:
+		return "e.g. ~/<mod manager profile>/BepInEx/plugins"
+	}
+}
 
 // Set by goreleaser / mise run build via -ldflags.
 var (
@@ -51,7 +72,7 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 
 	// --- inputs (restored from preferences) ---
 	localDir := widget.NewEntry()
-	localDir.SetPlaceHolder(`e.g. %APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins`)
+	localDir.SetPlaceHolder(localDirExample())
 	localDir.SetText(prefs.String("localDir"))
 	browse := widget.NewButton("Browse…", func() {
 		dialog.ShowFolderOpen(func(dir fyne.ListableURI, err error) {
@@ -70,8 +91,8 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 	user.SetPlaceHolder("optional, defaults to ssh config / local user")
 	user.SetText(prefs.String("user"))
 	pluginsDir := widget.NewEntry()
-	pluginsDir.SetPlaceHolder("/path/to/BepInEx/plugins")
-	pluginsDir.SetText(prefs.String("pluginsDir"))
+	pluginsDir.SetPlaceHolder(defaultPluginsDir)
+	pluginsDir.SetText(prefs.StringWithFallback("pluginsDir", defaultPluginsDir))
 
 	followUp := widget.NewMultiLineEntry()
 	followUp.SetMinRowsVisible(3)
@@ -84,7 +105,7 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 			followUp.Disable()
 		}
 	})
-	followUpOn.SetChecked(prefs.Bool("followUpOn"))
+	followUpOn.SetChecked(prefs.BoolWithFallback("followUpOn", true))
 	followUpOn.OnChanged(followUpOn.Checked)
 
 	form := widget.NewForm(
@@ -92,8 +113,10 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 		widget.NewFormItem("Server", container.NewBorder(nil, nil, nil,
 			container.NewHBox(widget.NewLabel("Port"), container.NewGridWrap(fyne.NewSize(80, port.MinSize().Height), port)), host)),
 		widget.NewFormItem("SSH user", user),
-		widget.NewFormItem("Server plugins dir", pluginsDir),
-		widget.NewFormItem("Follow-up", container.NewVBox(followUpOn, followUp)),
+		&widget.FormItem{Text: "Server plugins dir", Widget: pluginsDir,
+			HintText: "Default: valheim-server-docker with its README volumes ($HOME/valheim-server/data)"},
+		&widget.FormItem{Text: "Follow-up", Widget: container.NewVBox(followUpOn, followUp),
+			HintText: "Default: restart the valheim-server-docker container if no players are online"},
 	)
 
 	// --- output ---

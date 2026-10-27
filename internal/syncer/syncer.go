@@ -20,11 +20,11 @@ import (
 )
 
 type Config struct {
-	LocalDir   string // local BepInEx/plugins folder, e.g. inside a Gale profile
+	LocalDir   string // local folder to push (~/ allowed), e.g. a Gale profile's BepInEx/plugins
 	Host       string
 	Port       int
 	User       string // empty = whatever ssh config says
-	PluginsDir string // absolute path on the server
+	PluginsDir string // path on the server: absolute or ~/relative to the ssh user's home
 	FollowUp   string // shell command run on the server after a sync; empty = skip
 }
 
@@ -51,10 +51,32 @@ func (c Config) validate() error {
 	if c.Port <= 0 || c.Port > 65535 {
 		return fmt.Errorf("invalid port %d", c.Port)
 	}
-	if !strings.HasPrefix(c.PluginsDir, "/") || len(c.PluginsDir) < 2 {
-		return errors.New("server plugins dir must be an absolute path")
+	absolute := strings.HasPrefix(c.PluginsDir, "/") || strings.HasPrefix(c.PluginsDir, "~/")
+	if !absolute || len(c.PluginsDir) < 3 {
+		return errors.New("server plugins dir must be an absolute path or start with ~/")
 	}
 	return nil
+}
+
+// expandHome resolves a leading ~/ in a local path.
+func expandHome(p string) (string, error) {
+	rest, ok := strings.CutPrefix(filepath.ToSlash(p), "~/")
+	if !ok {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, filepath.FromSlash(rest)), nil
+}
+
+// remotePath quotes a server path for sh, keeping a leading ~/ expandable.
+func remotePath(p string) string {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		return `"$HOME"/` + shQuote(rest)
+	}
+	return shQuote(p)
 }
 
 // TestConnection checks that ssh works and reports whether the plugins dir exists.
@@ -64,7 +86,7 @@ func TestConnection(ctx context.Context, c Config, log Logger) error {
 	}
 	cmd := fmt.Sprintf(`echo "connected as $(whoami)@$(hostname)"; `+
 		`if [ -d %[1]s ]; then echo "plugins dir exists: %[2]s"; else echo "plugins dir missing, will be created: %[2]s"; fi`,
-		shQuote(c.PluginsDir), c.PluginsDir)
+		remotePath(c.PluginsDir), c.PluginsDir)
 	return runSSH(ctx, c, cmd, nil, log)
 }
 
@@ -74,7 +96,10 @@ func Sync(ctx context.Context, c Config, log Logger, progress Progress) error {
 	if err := c.validate(); err != nil {
 		return err
 	}
-	src := c.LocalDir
+	src, err := expandHome(c.LocalDir)
+	if err != nil {
+		return err
+	}
 	if st, err := os.Stat(src); err != nil || !st.IsDir() {
 		return fmt.Errorf("plugins dir not found: %s", src)
 	}
@@ -85,8 +110,9 @@ func Sync(ctx context.Context, c Config, log Logger, progress Progress) error {
 	}
 	log(fmt.Sprintf("Packing %d files (%.1f MB) from %s", files, float64(total)/1e6, src))
 
-	// Windows ssh.exe hangs before the handshake when stdin is a pipe, but
-	// reads a plain file fine, so the archive goes through a temp file.
+	// The archive goes through a temp file rather than a pipe: ssh shares the
+	// file offset with us, which gives upload progress, and Windows ssh.exe was
+	// seen hanging on pipe stdin (at least when started from an ssh session).
 	tmp, err := os.CreateTemp("", "valheim-mod-pusher-*.tar.gz")
 	if err != nil {
 		return err
@@ -135,7 +161,7 @@ rm -rf "$dst.bak"
 if [ -d "$dst" ]; then mv "$dst" "$dst.bak"; fi
 mv "$dst.new" "$dst"
 echo "Synced to $dst:"
-ls -1 "$dst"`, shQuote(c.PluginsDir))
+ls -1 "$dst"`, remotePath(c.PluginsDir))
 
 	err = runSSH(ctx, c, remote, tmp, log)
 	close(stop)

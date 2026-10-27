@@ -22,7 +22,7 @@ func randomString(n int) string {
 //
 //	MOD_PUSHER_HOST=1.2.3.4 MOD_PUSHER_PORT=2266 go test ./internal/syncer -run Live -v
 //
-// It only touches /tmp/valheim-mod-pusher-it on the server.
+// It only touches ~/valheim-mod-pusher-it on the server (exercising ~/ paths).
 func liveConfig(t *testing.T) Config {
 	host := os.Getenv("MOD_PUSHER_HOST")
 	if host == "" {
@@ -51,7 +51,7 @@ func liveConfig(t *testing.T) Config {
 		LocalDir:   local,
 		Host:       host,
 		Port:       port,
-		PluginsDir: "/tmp/valheim-mod-pusher-it/BepInEx/plugins",
+		PluginsDir: "~/valheim-mod-pusher-it/BepInEx/plugins",
 		FollowUp:   `if docker exec valheim-server valheim-is-idle; then echo WOULD-RUN: docker restart; else echo "server was not restarted: there are players"; fi`,
 	}
 }
@@ -89,7 +89,7 @@ func TestLiveSync(t *testing.T) {
 		t.Error("upload progress never moved")
 	}
 	out = nil
-	check := `cd /tmp/valheim-mod-pusher-it/BepInEx && find plugins plugins.bak -type f | sort && cat "plugins/Other-Mod/sub dir/it's.txt"; echo; rm -rf /tmp/valheim-mod-pusher-it`
+	check := `cd ~/valheim-mod-pusher-it/BepInEx && find plugins plugins.bak -type f | sort && cat "plugins/Other-Mod/sub dir/it's.txt"; echo; rm -rf ~/valheim-mod-pusher-it`
 	if err := runSSH(ctx, c, check, nil, log); err != nil {
 		t.Fatal(err)
 	}

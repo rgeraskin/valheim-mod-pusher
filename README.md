@@ -4,6 +4,8 @@
 
 A small cross-platform desktop app that pushes your local Valheim mods folder to a dedicated server over ssh and then runs a follow-up command there, e.g. restarts the server if nobody is playing.
 
+Tested with [valheim-server-docker](https://github.com/community-valheim-tools/valheim-server-docker), and its defaults are built in: see [Defaults: valheim-server-docker](#defaults-valheim-server-docker).
+
 ## Overview
 
 Keeping a modded dedicated server in sync with the mod manager profile you play with is tedious: zip, upload, unpack, swap folders, restart, and don't restart while friends are online. **Valheim Mod Pusher** does it in one click: point it at the profile's `BepInEx/plugins` folder (e.g. from [Gale](https://github.com/Kesomannen/gale) or r2modman), at the server's plugins folder, press **Sync**.
@@ -15,7 +17,8 @@ Keeping a modded dedicated server in sync with the mod manager profile you play 
 - 🖥️ **Cross-platform GUI** - Windows, macOS and Linux, a single binary each
 - 🔑 **Uses your ssh setup** - runs the system `ssh`, so `~/.ssh/config`, agents (1Password, Strongbox, ...) and `known_hosts` just work
 - 🛡️ **Safe swap** - the remote folder is replaced as a whole, the previous one is kept as `<dir>.bak`
-- 🔁 **Follow-up command** - optional, editable; by default restarts the server only when no players are online
+- 🐳 **valheim-server-docker defaults** - server path and follow-up command work out of the box with its README setup
+- 🔁 **Follow-up command** - editable or switched off; by default restarts the server only when no players are online
 - 🧾 **Host key prompt** - for a server this machine has never seen, shows the key fingerprints and asks before trusting it
 - 📊 **Progress and live log** - packing/upload progress and the remote output as it happens
 - 💾 **Remembers settings** between runs
@@ -33,10 +36,10 @@ Keeping a modded dedicated server in sync with the mod manager profile you play 
 ### Homebrew (macOS)
 
 ```sh
-brew install rgeraskin/homebrew/valheim-mod-pusher
+brew install --cask rgeraskin/homebrew/valheim-mod-pusher
 ```
 
-Then start it with `valheim-mod-pusher`.
+Installs **Valheim Mod Pusher.app** into `/Applications` (plus a `valheim-mod-pusher` command). The app is not signed with an Apple Developer ID, so the cask removes the quarantine attribute after install.
 
 ### Windows and Linux
 
@@ -56,22 +59,28 @@ On Linux install the GUI headers first, e.g. on Debian/Ubuntu: `sudo apt install
 
 | Field | Meaning |
 |---|---|
-| **Local plugins dir** | Folder to push, e.g. `%APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins` |
+| **Local plugins dir** | Folder to push, e.g. a Gale profile: `%APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins` on Windows, `~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins` on Linux |
 | **Server**, **Port** | Server address (or an alias from `~/.ssh/config`) and ssh port |
 | **SSH user** | Optional; defaults to your ssh config / local user name |
-| **Server plugins dir** | Absolute path on the server, e.g. `/opt/valheim-server/data/bepinex/BepInEx/plugins` |
-| **Follow-up** | Optional shell command run on the server after a successful sync |
+| **Server plugins dir** | Path on the server, absolute or `~/...`. Default: `~/valheim-server/data/bepinex/BepInEx/plugins` (valheim-server-docker) |
+| **Follow-up** | Shell command run on the server after a successful sync, on by default. Default: restart the valheim-server-docker container if no players are online |
 
 - **Test connection** checks ssh access and whether the server folder exists.
 - **Sync** asks for confirmation, uploads the folder, swaps it in (keeping `<dir>.bak`) and runs the follow-up command.
 
-### Default follow-up command
+### Defaults: valheim-server-docker
 
-Written for the [valheim-server Docker image](https://github.com/community-valheim-tools/valheim-server-docker), whose built-in `valheim-is-idle` exits 0 when no players are connected:
+The app was tested with [valheim-server-docker](https://github.com/community-valheim-tools/valheim-server-docker) (`BEPINEX=true`), and its defaults assume that image run as in its README: container `valheim-server`, volumes `$HOME/valheim-server/config:/config` and `$HOME/valheim-server/data:/opt/valheim`.
 
-```sh
-if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi
-```
+- **Server plugins dir** `~/valheim-server/data/bepinex/BepInEx/plugins` is the folder BepInEx loads plugins from (`/opt/valheim/bepinex/BepInEx/plugins` in the container). The push replaces it, so mods removed locally disappear from the server too. The image's other route, `config/bepinex/plugins`, is copied over on container start with `rsync -a`, which never deletes, so removed mods would keep loading.
+- **Follow-up command** restarts the container so the new mods load, but only when nobody is playing. `valheim-is-idle` ships with the image and exits 0 when no players are connected:
+
+  ```sh
+  # valheim-server-docker: restart the container only if no players are online
+  if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi
+  ```
+
+Other volume paths or container names: just edit the two fields. The ssh user needs to be in the `docker` group for the follow-up command.
 
 ### How it works
 
@@ -101,9 +110,9 @@ mise run release-check # local goreleaser snapshot, nothing published (needs `br
 mise tasks             # list everything else
 ```
 
-The live tests only touch `/tmp/valheim-mod-pusher-it` on the server, and their follow-up command only echoes. On Windows run them from a desktop session: `ssh.exe` hangs when spawned from inside another ssh session.
+The live tests only touch `~/valheim-mod-pusher-it` on the server, and their follow-up command only echoes. On Windows run them from a desktop session: `ssh.exe` hangs when spawned from inside another ssh session.
 
-CI runs on Linux, macOS and Windows runners, because the GUI toolkit (Fyne) is cgo on every platform. Pushing a `v*` tag runs the release: Linux archives are built natively on Linux runners (amd64 and arm64), GoReleaser on a macOS runner builds macOS (arm64, amd64) and Windows (amd64, via mingw-w64), publishes everything to one GitHub release and updates the Homebrew formula. Running the release workflow manually does a snapshot dry run and uploads the result as a workflow artifact.
+CI runs on Linux, macOS and Windows runners, because the GUI toolkit (Fyne) is cgo on every platform. Pushing a `v*` tag runs the release: Linux archives are built natively on Linux runners (amd64 and arm64), GoReleaser on a macOS runner builds macOS (arm64, amd64) and Windows (amd64, via mingw-w64), publishes everything to one GitHub release and updates the Homebrew cask. Running the release workflow manually does a snapshot dry run and uploads the result as a workflow artifact.
 
 ## Dependencies
 

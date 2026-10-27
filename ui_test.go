@@ -18,11 +18,8 @@ func TestScreenshot(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	w := test.NewWindow(nil)
-	a.Preferences().SetString("localDir", `C:\Users\rg\AppData\Roaming\com.kesomannen.gale\valheim\profiles\Dedicated\BepInEx\plugins`)
-	a.Preferences().SetString("host", "135.106.217.244")
-	a.Preferences().SetString("port", "2266")
-	a.Preferences().SetString("pluginsDir", "/opt/valheim-server/data/bepinex/BepInEx/plugins")
-	a.Preferences().SetBool("followUpOn", true)
+	// first launch: only what the user must type, the rest are defaults
+	a.Preferences().SetString("host", "203.0.113.10")
 	w.SetContent(buildUI(a.Preferences(), w))
 	w.Resize(fyne.NewSize(760, 680))
 	f, err := os.Create(out)

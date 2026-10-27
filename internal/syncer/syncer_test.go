@@ -57,6 +57,18 @@ func TestTarGzLayout(t *testing.T) {
 	}
 }
 
+func TestRemotePath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/opt/a b":           `'/opt/a b'`,
+		"~/valheim-server/x": `"$HOME"/'valheim-server/x'`,
+		"~/it's":             `"$HOME"/'it'\''s'`,
+	} {
+		if got := remotePath(in); got != want {
+			t.Errorf("remotePath(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
 func TestShQuote(t *testing.T) {
 	if got := shQuote(`/a b/it's`); got != `'/a b/it'\''s'` {
 		t.Errorf("got %s", got)
