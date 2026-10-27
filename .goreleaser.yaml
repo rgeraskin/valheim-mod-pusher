@@ -9,9 +9,45 @@ before:
     # Windows icon + manifest as rsrc_windows_amd64.syso: go build links it into
     # windows builds only (the filename suffix is a build constraint).
     - go run github.com/tc-hib/go-winres@v0.3.3 simply --icon Icon.png --manifest gui --arch amd64
+    # Info.plist of the macOS .app, versioned (archives cannot template files in
+    # GoReleaser OSS, so it is rendered up front into the gitignored build/).
+    - scripts/macos-info-plist.sh {{ .Version }} build/macos/Info.plist
 
+# cgo everywhere: Fyne renders through OpenGL/GLFW. This job runs on a macOS
+# runner (see release.yml), which builds both darwin arches natively and windows
+# through mingw-w64. Linux GUI builds need the X11/Wayland/GL headers and libs of
+# the target, so they are built on Linux runners and attached below via
+# extra_files instead.
 builds:
-  - main: .
+  - id: macos
+    main: .
+    # The binary goes straight into the app bundle; the archive adds the rest
+    # of the bundle (Info.plist, icon), see archives below.
+    binary: Valheim Mod Pusher.app/Contents/MacOS/valheim-mod-pusher
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CGO_CFLAGS=-target x86_64-apple-macos13
+          - CGO_LDFLAGS=-target x86_64-apple-macos13
+
+  - id: windows
+    main: .
     binary: valheim-mod-pusher
     flags:
       - -trimpath
@@ -20,62 +56,50 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
-    # cgo everywhere: Fyne renders through OpenGL/GLFW. This job runs on a macOS
-    # runner (see release.yml), which builds both darwin arches natively and
-    # windows through mingw-w64. Linux GUI builds need the X11/Wayland/GL
-    # headers and libs of the target, so they are built on Linux runners and
-    # attached below via extra_files instead.
+      # GUI subsystem: no console window behind the app
+      - -H=windowsgui
     env:
       - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+      - CXX=x86_64-w64-mingw32-g++
     goos:
-      - darwin
       - windows
+    # mingw-w64 from Homebrew has no arm64 target; Windows on ARM runs the
+    # amd64 build under emulation.
     goarch:
-      - arm64
       - amd64
-    ignore:
-      # mingw-w64 from Homebrew has no arm64 target; Windows on ARM runs the
-      # amd64 build under emulation.
-      - goos: windows
-        goarch: arm64
-    overrides:
-      - goos: darwin
-        goarch: amd64
-        env:
-          - CGO_ENABLED=1
-          - CGO_CFLAGS=-target x86_64-apple-macos12
-          - CGO_LDFLAGS=-target x86_64-apple-macos12
-      - goos: windows
-        goarch: amd64
-        env:
-          - CGO_ENABLED=1
-          - CC=x86_64-w64-mingw32-gcc
-          - CXX=x86_64-w64-mingw32-g++
-        ldflags:
-          - -s -w
-          - -X main.version={{ .Version }}
-          - -X main.commit={{ .Commit }}
-          - -X main.date={{ .Date }}
-          # GUI subsystem: no console window behind the app
-          - -H=windowsgui
 
 archives:
-  - formats:
+  - id: macos
+    ids:
+      - macos
+    formats:
       - tar.gz
     # this name template makes the OS and Arch compatible with the results of `uname`.
     # release.yml's linux job names its archives with the same scheme.
-    name_template: >-
+    name_template: &name_template >-
       {{ .ProjectName }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
+    files:
+      - src: build/macos/Info.plist
+        dst: Valheim Mod Pusher.app/Contents
+        strip_parent: true
+      - src: packaging/macos/Icon.icns
+        dst: Valheim Mod Pusher.app/Contents/Resources
+        strip_parent: true
+      - README.md
+      - LICENSE
+
+  - id: windows
+    ids:
+      - windows
+    formats:
+      - zip
+    name_template: *name_template
 
 checksum:
   name_template: "checksums.txt"
@@ -95,21 +119,37 @@ changelog:
       - "^chore:"
       - "^ci:"
 
-# NOTE: `brews` is deprecated in favor of `homebrew_casks` but still fully
-# functional in the pinned GoReleaser version (it emits a warning, then writes a
-# real Formula). A Formula is the right abstraction here as well: it installs a
-# single binary that opens the app window, and unlike a Cask its binary is not
-# Gatekeeper-quarantined, so no xattr dequarantine hack is needed. The
-# GoReleaser version is pinned in .mise.toml (used by both the release workflow
-# and local snapshots) so a future release that actually removes `brews` cannot
-# break us unexpectedly.
-brews:
+# A Cask, not a Formula (unlike the CLI repos): this is a GUI app, so it belongs
+# in /Applications. Same shape as the hand-written emojiq cask (app stanza,
+# per-arch url/sha256, quarantine postflight, zap), generated on every release.
+homebrew_casks:
   - name: valheim-mod-pusher
+    ids:
+      - macos
     homepage: https://github.com/rgeraskin/valheim-mod-pusher
     description: Desktop app that pushes a local mods folder to a Valheim server over ssh and runs a follow-up command
     license: MIT
 
-    directory: Formula
+    custom_block: |
+      app "Valheim Mod Pusher.app"
+    # CLI entry point (`valheim-mod-pusher --version`, or launch from a terminal)
+    binaries:
+      - "#{appdir}/Valheim Mod Pusher.app/Contents/MacOS/valheim-mod-pusher"
+
+    hooks:
+      post:
+        # Remove quarantine attribute to bypass Gatekeeper: the app is not
+        # signed with an Apple Developer ID certificate (same as emojiq).
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/Valheim Mod Pusher.app"]
+          end
+
+    zap:
+      trash:
+        - "~/Library/Preferences/fyne/io.github.rgeraskin.valheimmodpusher"
+
+    directory: Casks
     repository:
       owner: rgeraskin
       name: homebrew-homebrew

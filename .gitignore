@@ -4,3 +4,4 @@
 /coverage.out
 /coverage.html
 rsrc_windows_*.syso
+/build

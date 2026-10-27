@@ -1,12 +1,11 @@
 [tools]
 go = "1.27.0"
 golangci-lint = "2.13.1"
-# Release tooling. DO NOT bump blindly in a "update all tools" sweep:
-# .goreleaser.yaml still uses the deprecated-but-functional `brews` (Formula)
-# generator, so a GoReleaser release that finally REMOVES it would break
-# Homebrew publishing. After a bump run `goreleaser release --snapshot --clean
-# --skip=publish` (mise run release-check) and confirm
-# dist/homebrew/Formula/valheim-mod-pusher.rb is still written.
+# Release tooling. DO NOT bump blindly in a "update all tools" sweep: the
+# Homebrew cask relies on `homebrew_casks` details (custom_block for the `app`
+# stanza, `#{appdir}` in binaries, post-install hooks). After a bump run
+# `goreleaser release --snapshot --clean --skip=publish` (mise run
+# release-check) and diff dist/homebrew/Casks/valheim-mod-pusher.rb.
 #
 # 2.17.1 matches the version argocdf and kctouch pin. GoReleaser runs on macOS
 # here (like kctouch), so argocdf's linux-x64 aqua-attestation issue with
@@ -45,7 +44,7 @@ description = "Run tests under the race detector. Separate from `test` because i
 run = "go test -race ./..."
 
 [tasks.test-live]
-# Talks to a real server: uploads to /tmp/valheim-mod-pusher-it there and
+# Talks to a real server: uploads to ~/valheim-mod-pusher-it there and
 # removes it afterwards; the follow-up command only echoes. Not part of `check`.
 description = "Run the live ssh tests (needs MOD_PUSHER_HOST, optionally MOD_PUSHER_PORT)"
 run = "go test -v -count=1 -run Live ./internal/syncer"
@@ -78,12 +77,8 @@ run = "go mod tidy"
 [tasks.release-check]
 # Reproduces .github/workflows/release.yml locally, minus publishing and minus
 # the Linux archives (built on Linux runners in CI). The windows build needs
-# mingw-w64 (`brew install mingw-w64`). After a GoReleaser bump, confirm
-# dist/homebrew/Formula/valheim-mod-pusher.rb is still written.
-#
-# `goreleaser check` is intentionally not part of this: it exits non-zero on the
-# known `brews` deprecation (see the note in .goreleaser.yaml) even though the
-# config is valid and releases fine.
+# mingw-w64 (`brew install mingw-w64`). After a GoReleaser bump, diff
+# dist/homebrew/Casks/valheim-mod-pusher.rb against the previous release.
 description = "Build a local release snapshot without publishing"
 run = "goreleaser release --snapshot --clean --skip=publish"
 
@@ -93,7 +88,7 @@ run = """
 rm -f $BINARY_NAME
 rm -f coverage.out coverage.html
 rm -f rsrc_windows_*.syso
-rm -rf dist
+rm -rf dist build
 """
 
 [tasks.check]

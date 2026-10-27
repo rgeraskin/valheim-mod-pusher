@@ -121,7 +121,7 @@ jobs:
         run: goreleaser release --clean
         env:
           # GH_PAT needs `contents: write` on this repo and the homebrew tap
-          # repo so GoReleaser can push the generated Formula.
+          # repo so GoReleaser can push the generated Cask.
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       - name: Run GoReleaser (snapshot)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -135,5 +135,5 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.txt
-            dist/homebrew/Formula/*.rb
+            dist/homebrew/Casks/*.rb
             linux/*.tar.gz
