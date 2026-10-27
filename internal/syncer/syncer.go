@@ -84,8 +84,13 @@ func TestConnection(ctx context.Context, c Config, log Logger) error {
 	if err := c.validate(); err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf(`echo "connected as $(whoami)@$(hostname)"; `+
-		`if [ -d %[1]s ]; then echo "plugins dir exists: %[2]s"; else echo "plugins dir missing, will be created: %[2]s"; fi`,
+	// Sync renames the dir and creates siblings, so it needs write access to
+	// the parent (or the nearest existing ancestor when the dir is missing).
+	cmd := fmt.Sprintf(`d=%[1]s
+echo "connected as $(whoami)@$(hostname)"
+if [ -d "$d" ]; then echo "plugins dir exists: %[2]s"; else echo "plugins dir missing, will be created: %[2]s"; fi
+a=$(dirname "$d"); while [ ! -e "$a" ]; do a=$(dirname "$a"); done
+if [ -w "$a" ]; then echo "write access: ok ($a)"; else echo "WARNING: $(whoami) cannot write to $a, sync will fail (see README: Permissions)"; fi`,
 		remotePath(c.PluginsDir), c.PluginsDir)
 	return runSSH(ctx, c, cmd, nil, log)
 }

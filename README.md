@@ -18,7 +18,7 @@ Keeping a modded dedicated server in sync with the mod manager profile you play 
 - 🔑 **Uses your ssh setup** - runs the system `ssh`, so `~/.ssh/config`, agents (1Password, Strongbox, ...) and `known_hosts` just work
 - 🛡️ **Safe swap** - the remote folder is replaced as a whole, the previous one is kept as `<dir>.bak`
 - 🐳 **valheim-server-docker defaults** - server path and follow-up command work out of the box with its README setup
-- 🔁 **Follow-up command** - editable or switched off; by default restarts the server only when no players are online
+- 🔁 **Follow-up command** - editable or switched off; by default applies the mods and restarts the server only when no players are online
 - 🧾 **Host key prompt** - for a server this machine has never seen, shows the key fingerprints and asks before trusting it
 - 📊 **Progress and live log** - packing/upload progress and the remote output as it happens
 - 💾 **Remembers settings** between runs
@@ -62,25 +62,40 @@ On Linux install the GUI headers first, e.g. on Debian/Ubuntu: `sudo apt install
 | **Local plugins dir** | Folder to push, e.g. a Gale profile: `%APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins` on Windows, `~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins` on Linux, or BepInEx in the Steam game folder on macOS: `~/Library/Application Support/Steam/steamapps/common/Valheim/BepInEx/plugins` |
 | **Server**, **Port** | Server address (or an alias from `~/.ssh/config`) and ssh port |
 | **SSH user** | Optional; defaults to your ssh config / local user name |
-| **Server plugins dir** | Path on the server, absolute or `~/...`. Default: `~/valheim-server/data/bepinex/BepInEx/plugins` (valheim-server-docker) |
-| **Follow-up** | Shell command run on the server after a successful sync, on by default. Default: restart the valheim-server-docker container if no players are online |
+| **Server plugins dir** | Path on the server, absolute or `~/...`. Default: `~/valheim-server/config/bepinex/plugins` (valheim-server-docker) |
+| **Follow-up** | Shell command run on the server after a successful sync, on by default. Default: apply the mods in valheim-server-docker and restart it if no players are online |
 
-- **Test connection** checks ssh access and whether the server folder exists.
+- **Test connection** checks ssh access, whether the server folder exists and whether the ssh user may write there (see [Permissions](#permissions)).
 - **Sync** asks for confirmation, uploads the folder, swaps it in (keeping `<dir>.bak`) and runs the follow-up command.
 
 ### Defaults: valheim-server-docker
 
 The app was tested with [valheim-server-docker](https://github.com/community-valheim-tools/valheim-server-docker) (`BEPINEX=true`), and its defaults assume that image run as in its README: container `valheim-server`, volumes `$HOME/valheim-server/config:/config` and `$HOME/valheim-server/data:/opt/valheim`.
 
-- **Server plugins dir** `~/valheim-server/data/bepinex/BepInEx/plugins` is the folder BepInEx loads plugins from (`/opt/valheim/bepinex/BepInEx/plugins` in the container). The push replaces it, so mods removed locally disappear from the server too. The image's other route, `config/bepinex/plugins`, is copied over on container start with `rsync -a`, which never deletes, so removed mods would keep loading.
-- **Follow-up command** restarts the container so the new mods load, but only when nobody is playing. `valheim-is-idle` ships with the image and exits 0 when no players are connected:
+- **Server plugins dir** `~/valheim-server/config/bepinex/plugins` (`/config/bepinex/plugins` in the container) is where the image wants your plugins. Not the folder BepInEx loads from (`/opt/valheim/bepinex/BepInEx/plugins`): the image rebuilds that one from scratch on every Valheim or BepInEx update (it checks every 15 minutes by default) and only copies `/config/bepinex/plugins` back in, so anything pushed there directly disappears with the next update.
+- **Follow-up command** applies the pushed mods and restarts the container so they load, but only when nobody is playing:
 
   ```sh
-  # valheim-server-docker: restart the container only if no players are online
+  # valheim-server-docker: mirror /config/bepinex/plugins into the live BepInEx dir, restart only if no players are online
+  docker exec valheim-server rsync -a --delete /config/bepinex/plugins/ /opt/valheim/bepinex/BepInEx/plugins/
   if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi
   ```
 
+  The image itself copies `/config/bepinex/plugins` into the live folder on container start, but with `rsync -a`, which never deletes: mods you removed would keep loading. The `--delete` mirror fixes that. It runs even when players are online, which is safe: files are replaced by rename, not overwritten in place, so the running server keeps the versions it loaded, and the next restart (the image's daily one or an update) picks up exactly the pushed set. `valheim-is-idle` ships with the image and exits 0 when no players are connected.
+
 Other volume paths or container names: just edit the two fields. The ssh user needs to be in the `docker` group for the follow-up command.
+
+### Permissions
+
+The ssh user must be able to write to the **parent** of the server plugins dir: a sync creates `plugins.new` next to it and renames `plugins` to `plugins.bak`. **Test connection** reports this as `write access: ok` or a warning.
+
+With valheim-server-docker this is a common problem: the container runs as root by default, so the folders it creates in the config volume (`~/valheim-server/config/bepinex` and its `plugins`) are owned by `root` and not writable by your ssh user, and the sync fails with `Permission denied`. Fix it once:
+
+```sh
+sudo chown -R "$USER": ~/valheim-server/config/bepinex
+```
+
+or let the image create its files as your user from the start by running the container with `PUID`/`PGID` set to your user's ids (`id -u`, `id -g`).
 
 ### How it works
 

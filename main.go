@@ -28,10 +28,15 @@ var iconPNG []byte
 
 // Defaults match valheim-server-docker
 // (https://github.com/community-valheim-tools/valheim-server-docker) with the
-// volumes from its README: $HOME/valheim-server/{config,data}.
+// volumes from its README: $HOME/valheim-server/{config,data}. Plugins go to
+// /config/bepinex/plugins, the image's documented location: the live BepInEx
+// dir is rebuilt from scratch on every game/BepInEx update and only re-gets
+// what is in /config. The image copies them over on start with `rsync -a`,
+// which never deletes, so the follow-up mirrors them with --delete first.
 const (
-	defaultPluginsDir = "~/valheim-server/data/bepinex/BepInEx/plugins"
-	defaultFollowUp   = `# valheim-server-docker: restart the container only if no players are online
+	defaultPluginsDir = "~/valheim-server/config/bepinex/plugins"
+	defaultFollowUp   = `# valheim-server-docker: mirror /config/bepinex/plugins into the live BepInEx dir, restart only if no players are online
+docker exec valheim-server rsync -a --delete /config/bepinex/plugins/ /opt/valheim/bepinex/BepInEx/plugins/
 if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`
 )
 
@@ -116,9 +121,9 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 			container.NewHBox(widget.NewLabel("Port"), container.NewGridWrap(fyne.NewSize(80, port.MinSize().Height), port)), host)),
 		widget.NewFormItem("SSH user", user),
 		&widget.FormItem{Text: "Server plugins dir", Widget: pluginsDir,
-			HintText: "Default: valheim-server-docker with its README volumes ($HOME/valheim-server/data)"},
+			HintText: "Default: valheim-server-docker with its README volumes ($HOME/valheim-server/config)"},
 		&widget.FormItem{Text: "Follow-up", Widget: container.NewVBox(followUpOn, followUp),
-			HintText: "Default: restart the valheim-server-docker container if no players are online"},
+			HintText: "Default: apply the mods in valheim-server-docker, restart it if no players are online"},
 	)
 
 	// --- output ---
