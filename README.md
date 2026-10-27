@@ -89,13 +89,18 @@ Other volume paths or container names: just edit the two fields. The ssh user ne
 
 The ssh user must be able to write to the **parent** of the server plugins dir: a sync creates `plugins.new` next to it and renames `plugins` to `plugins.bak`. **Test connection** reports this as `write access: ok` or a warning.
 
-With valheim-server-docker this is a common problem: the container runs as root by default, so the folders it creates in the config volume (`~/valheim-server/config/bepinex` and its `plugins`) are owned by `root` and not writable by your ssh user, and the sync fails with `Permission denied`. Fix it once:
+With valheim-server-docker this is a common problem. The container runs as root by default (`PUID=0`, `PGID=0`), and **on every container start** it runs `chown -R` over `/config` (and `/opt/valheim`) to the user it runs as. So the config volume, including `~/valheim-server/config/bepinex/plugins`, ends up owned by `root`, your ssh user cannot write there, and the sync fails with `Permission denied`.
 
-```sh
-sudo chown -R "$USER": ~/valheim-server/config/bepinex
+A one-off `sudo chown -R "$USER": ~/valheim-server/config/bepinex` does **not** last: the next container start, including the restart in the default follow-up command, gives it back to root. The durable fix is to run the container as your ssh user, so the image's own `chown` hands the files to you:
+
+```yaml
+# docker-compose.yml of valheim-server-docker
+environment:
+  PUID: 1000 # id -u of the ssh user
+  PGID: 1000 # id -g of the ssh user
 ```
 
-or let the image create its files as your user from the start by running the container with `PUID`/`PGID` set to your user's ids (`id -u`, `id -g`).
+Then recreate the container (`docker compose up -d`). The game server itself then runs as that user too; see the image README's notes on non-root `PUID`/`PGID` before switching an existing server.
 
 ### How it works
 
