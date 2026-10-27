@@ -20,8 +20,9 @@ func TestScreenshot(t *testing.T) {
 	w := test.NewWindow(nil)
 	// first launch: only what the user must type, the rest are defaults
 	a.Preferences().SetString("host", "203.0.113.10")
-	w.SetContent(buildUI(a.Preferences(), w))
-	w.Resize(fyne.NewSize(760, 680))
+	content := buildUI(a.Preferences(), w)
+	w.SetContent(content)
+	w.Resize(fyne.NewSize(780, content.MinSize().Height))
 	f, err := os.Create(out)
 	if err != nil {
 		t.Fatal(err)

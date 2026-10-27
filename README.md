@@ -76,9 +76,16 @@ The app was tested with [valheim-server-docker](https://github.com/community-val
 - **Follow-up command** applies the pushed mods and restarts the container so they load, but only when nobody is playing:
 
   ```sh
-  # valheim-server-docker: mirror /config/bepinex/plugins into the live BepInEx dir, restart only if no players are online
-  docker exec valheim-server rsync -a --delete /config/bepinex/plugins/ /opt/valheim/bepinex/BepInEx/plugins/
-  if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi
+  # valheim-server-docker: mirror /config/bepinex/plugins
+  # into the live BepInEx dir, restart if no players online
+  docker exec valheim-server rsync -a --delete \
+    /config/bepinex/plugins/ \
+    /opt/valheim/bepinex/BepInEx/plugins/
+  if docker exec valheim-server valheim-is-idle; then
+    docker restart valheim-server
+  else
+    echo "server was not restarted: there are players"
+  fi
   ```
 
   The image itself copies `/config/bepinex/plugins` into the live folder on container start, but with `rsync -a`, which never deletes: mods you removed would keep loading. The `--delete` mirror fixes that. It runs even when players are online, which is safe: files are replaced by rename, not overwritten in place, so the running server keeps the versions it loaded, and the next restart (the image's daily one or an update) picks up exactly the pushed set. `valheim-is-idle` ships with the image and exits 0 when no players are connected.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,8 +17,10 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/rgeraskin/valheim-mod-pusher/internal/syncer"
@@ -35,10 +38,28 @@ var iconPNG []byte
 // which never deletes, so the follow-up mirrors them with --delete first.
 const (
 	defaultPluginsDir = "~/valheim-server/config/bepinex/plugins"
-	defaultFollowUp   = `# valheim-server-docker: mirror /config/bepinex/plugins into the live BepInEx dir, restart only if no players are online
-docker exec valheim-server rsync -a --delete /config/bepinex/plugins/ /opt/valheim/bepinex/BepInEx/plugins/
-if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`
+	defaultFollowUp   = `# valheim-server-docker: mirror /config/bepinex/plugins
+# into the live BepInEx dir, restart if no players online
+docker exec valheim-server rsync -a --delete \
+  /config/bepinex/plugins/ \
+  /opt/valheim/bepinex/BepInEx/plugins/
+if docker exec valheim-server valheim-is-idle; then
+  docker restart valheim-server
+else
+  echo "server was not restarted: there are players"
+fi`
 )
+
+// oldFollowUps are defaults of earlier versions: a saved follow-up equal to one
+// of them was never edited by the user, so it is upgraded to defaultFollowUp.
+var oldFollowUps = []string{
+	`if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`,
+	`# valheim-server-docker: restart the container only if no players are online
+if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`,
+	`# valheim-server-docker: mirror /config/bepinex/plugins into the live BepInEx dir, restart only if no players are online
+docker exec valheim-server rsync -a --delete /config/bepinex/plugins/ /opt/valheim/bepinex/BepInEx/plugins/
+if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`,
+}
 
 // localDirExample is the hint under the local plugins dir: Gale's default
 // profile location where Gale exists (Windows, Linux); on macOS, where no mod
@@ -69,8 +90,10 @@ func main() {
 	a := app.NewWithID("io.github.rgeraskin.valheimmodpusher")
 	a.SetIcon(fyne.NewStaticResource("Icon.png", iconPNG))
 	w := a.NewWindow("Valheim Mod Pusher " + version)
-	w.SetContent(buildUI(a.Preferences(), w))
-	w.Resize(fyne.NewSize(760, 680))
+	content := buildUI(a.Preferences(), w)
+	w.SetContent(content)
+	// as tall as the content needs: the log box takes any extra height
+	w.Resize(fyne.NewSize(780, content.MinSize().Height))
 	w.ShowAndRun()
 }
 
@@ -100,10 +123,16 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 	pluginsDir.SetPlaceHolder(defaultPluginsDir)
 	pluginsDir.SetText(prefs.StringWithFallback("pluginsDir", defaultPluginsDir))
 
+	// a code box: monospace, no wrapping, tall enough for the default script
 	followUp := widget.NewMultiLineEntry()
-	followUp.SetMinRowsVisible(3)
-	followUp.Wrapping = fyne.TextWrapWord
-	followUp.SetText(prefs.StringWithFallback("followUp", defaultFollowUp))
+	followUp.TextStyle = fyne.TextStyle{Monospace: true}
+	followUp.Wrapping = fyne.TextWrapOff
+	followUp.SetMinRowsVisible(strings.Count(defaultFollowUp, "\n") + 1)
+	savedFollowUp := prefs.StringWithFallback("followUp", defaultFollowUp)
+	if slices.Contains(oldFollowUps, savedFollowUp) {
+		savedFollowUp = defaultFollowUp
+	}
+	followUp.SetText(savedFollowUp)
 	followUpOn := widget.NewCheck("Run on the server after sync", func(on bool) {
 		if on {
 			followUp.Enable()
@@ -129,17 +158,22 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 	// --- output ---
 	var logMu sync.Mutex
 	var logText strings.Builder
-	logLabel := widget.NewLabel("")
+	logLabel := widget.NewLabel("Output of Test connection and Sync appears here.")
+	logLabel.Importance = widget.LowImportance // muted until the first line
 	logLabel.TextStyle = fyne.TextStyle{Monospace: true}
 	logLabel.Wrapping = fyne.TextWrapBreak
 	logScroll := container.NewVScroll(logLabel)
-	logScroll.SetMinSize(fyne.NewSize(0, 220))
+	logScroll.SetMinSize(fyne.NewSize(0, 140))
+	logBg := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	logBg.CornerRadius = theme.InputRadiusSize()
+	logBox := container.NewStack(logBg, logScroll)
 	logf := func(line string) {
 		logMu.Lock()
 		logText.WriteString(line + "\n")
 		text := logText.String()
 		logMu.Unlock()
 		fyne.Do(func() {
+			logLabel.Importance = widget.MediumImportance
 			logLabel.SetText(text)
 			logScroll.ScrollToBottom()
 		})
@@ -284,5 +318,5 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 
 	buttons := container.NewHBox(testBtn, syncBtn, cancelBtn)
 	top := container.NewVBox(form, buttons, bar)
-	return container.NewPadded(container.NewBorder(top, nil, nil, nil, logScroll))
+	return container.NewPadded(container.NewBorder(top, nil, nil, nil, logBox))
 }
