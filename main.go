@@ -35,16 +35,17 @@ const (
 if docker exec valheim-server valheim-is-idle; then docker restart valheim-server; else echo "server was not restarted: there are players"; fi`
 )
 
-// localDirExample is the placeholder for the local plugins dir: Gale's default
-// profile location where Gale exists (Windows, Linux), a generic path elsewhere.
+// localDirExample is the hint under the local plugins dir: Gale's default
+// profile location where Gale exists (Windows, Linux); on macOS, where no mod
+// manager is widely used, BepInEx installed into the Steam game folder.
 func localDirExample() string {
 	switch runtime.GOOS {
 	case "windows":
-		return `e.g. %APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins`
+		return `For example: %APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins`
 	case "linux":
-		return "e.g. ~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins"
+		return "For example: ~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins"
 	default:
-		return "e.g. ~/<mod manager profile>/BepInEx/plugins"
+		return "For example: ~/Library/Application Support/Steam/steamapps/common/Valheim/BepInEx/plugins"
 	}
 }
 
@@ -72,7 +73,7 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 
 	// --- inputs (restored from preferences) ---
 	localDir := widget.NewEntry()
-	localDir.SetPlaceHolder(localDirExample())
+	localDir.SetPlaceHolder("BepInEx/plugins folder to push")
 	localDir.SetText(prefs.String("localDir"))
 	browse := widget.NewButton("Browse…", func() {
 		dialog.ShowFolderOpen(func(dir fyne.ListableURI, err error) {
@@ -109,7 +110,8 @@ func buildUI(prefs fyne.Preferences, w fyne.Window) fyne.CanvasObject {
 	followUpOn.OnChanged(followUpOn.Checked)
 
 	form := widget.NewForm(
-		widget.NewFormItem("Local plugins dir", container.NewBorder(nil, nil, nil, browse, localDir)),
+		&widget.FormItem{Text: "Local plugins dir", Widget: container.NewBorder(nil, nil, nil, browse, localDir),
+			HintText: localDirExample()},
 		widget.NewFormItem("Server", container.NewBorder(nil, nil, nil,
 			container.NewHBox(widget.NewLabel("Port"), container.NewGridWrap(fyne.NewSize(80, port.MinSize().Height), port)), host)),
 		widget.NewFormItem("SSH user", user),

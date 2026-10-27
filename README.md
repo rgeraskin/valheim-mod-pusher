@@ -59,7 +59,7 @@ On Linux install the GUI headers first, e.g. on Debian/Ubuntu: `sudo apt install
 
 | Field | Meaning |
 |---|---|
-| **Local plugins dir** | Folder to push, e.g. a Gale profile: `%APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins` on Windows, `~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins` on Linux |
+| **Local plugins dir** | Folder to push, e.g. a Gale profile: `%APPDATA%\com.kesomannen.gale\valheim\profiles\<name>\BepInEx\plugins` on Windows, `~/.local/share/com.kesomannen.gale/valheim/profiles/<name>/BepInEx/plugins` on Linux, or BepInEx in the Steam game folder on macOS: `~/Library/Application Support/Steam/steamapps/common/Valheim/BepInEx/plugins` |
 | **Server**, **Port** | Server address (or an alias from `~/.ssh/config`) and ssh port |
 | **SSH user** | Optional; defaults to your ssh config / local user name |
 | **Server plugins dir** | Path on the server, absolute or `~/...`. Default: `~/valheim-server/data/bepinex/BepInEx/plugins` (valheim-server-docker) |
