@@ -166,7 +166,7 @@ rm -rf "$dst.bak"
 if [ -d "$dst" ]; then mv "$dst" "$dst.bak"; fi
 mv "$dst.new" "$dst"
 echo "Synced to $dst:"
-ls -1 "$dst"`, remotePath(c.PluginsDir))
+ls -1 "$dst" | sed 's/^/- /'`, remotePath(c.PluginsDir))
 
 	err = runSSH(ctx, c, remote, tmp, log)
 	close(stop)
